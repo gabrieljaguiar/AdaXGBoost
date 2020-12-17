@@ -1,6 +1,7 @@
 package moa.classifier.adpxgboost;
 
 import java.util.List;
+import java.util.Random;
 
 import com.github.javacliparser.FloatOption;
 import com.github.javacliparser.IntOption;
@@ -9,15 +10,23 @@ import com.yahoo.labs.samoa.instances.Instance;
 import com.yahoo.labs.samoa.instances.Instances;
 import moa.classifiers.AbstractClassifier;
 
-import ml.dmlc.xgboost4j.java.DMatrix;
-import ml.dmlc.xgboost4j.java.Booster;
-import ml.dmlc.xgboost4j.java.XGBoost;
+import moa.core.Measurement;
+
+//import ml.dmlc.xgboost4j.java.DMatrix;
+//import ml.dmlc.xgboost4j.java.Booster;
+//import ml.dmlc.xgboost4j.java.XGBoost;
 
 class AdaptativeXGBoost extends AbstractClassifier {
 
     protected Instances window;
 
-    protected XGBoost[] ensemble;
+    // protected XGBoost[] ensemble;
+
+    public IntOption windowSize = new IntOption("windowSize", 's', "Window size", 1000, 1, Integer.MAX_VALUE);
+
+    @Override
+    public void resetLearningImpl() {
+    }
 
     /* Predict method */
     @Override
@@ -25,16 +34,9 @@ class AdaptativeXGBoost extends AbstractClassifier {
 
         double[] votes = new double[instance.numClasses()];
 
-        if (model) {
-            List<IIndividual>[] rules = algorithm.getSolutions();
+        Random random = new Random();
 
-            for (int i = 0; i < instance.numClasses(); i++) {
-                for (IIndividual rule : rules[i]) {
-                    if ((Boolean) ((SyntaxTreeRuleIndividual) rule).getPhenotype().covers(instance))
-                        votes[i] += ((SimpleValueFitness) rule.getFitness()).getValue();
-                }
-            }
-        }
+        votes = random.doubles(instance.numClasses(), 1, 1000).toArray();
 
         return votes;
     }
@@ -49,12 +51,23 @@ class AdaptativeXGBoost extends AbstractClassifier {
         window.add(instance);
 
         if (window.size() == windowSize.getValue()) {
-            algorithm.addChunkData(window);
-            algorithm.prepare();
-            algorithm.execute();
-            model = true;
-
             window.delete();
         }
+    }
+
+    @Override
+    public void getModelDescription(StringBuilder out, int indent) {
+    }
+
+    @Override
+    protected Measurement[] getModelMeasurementsImpl() {
+        Measurement[] measurements = null;
+
+        return measurements;
+    }
+
+    @Override
+    public boolean isRandomizable() {
+        return true;
     }
 }
