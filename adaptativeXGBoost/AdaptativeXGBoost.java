@@ -27,27 +27,27 @@ import ml.dmlc.xgboost4j.java.Booster;
 import ml.dmlc.xgboost4j.java.XGBoost;
 import ml.dmlc.xgboost4j.java.XGBoostError;
 
-public class AdaptativeXGBoost extends AbstractClassifier {
+public class AdaptativeXGBoost extends AbstractClassifier implements MultiClassClassifier{
 	private static final long serialVersionUID = 1L;
 	
     
-    public IntOption nEstimators = new IntOption("Number of Estimators", 'n', "Number of Estimators", 5, 1, Integer.MAX_VALUE);
+    public IntOption nEstimators = new IntOption("numberOfBoosters", 'n', "Number of Boosters", 5, 1, Integer.MAX_VALUE);
 
-    public FloatOption learningRate = new FloatOption("Learning Rate", 'l', "Learning Rate", 0.3, 0, Float.MAX_VALUE);
+    public FloatOption learningRate = new FloatOption("learningRate", 'l', "Learning Rate", 0.3, 0, Float.MAX_VALUE);
 
-    public IntOption maxDepth = new IntOption("Max Depth", 'p', "Max Depth", 6, 1, Integer.MAX_VALUE);
+    public IntOption maxDepth = new IntOption("maxDepth", 'p', "Max Depth", 6, 1, Integer.MAX_VALUE);
 
-    public IntOption maxWindowSize = new IntOption("Max windowSize", 'm', "Max Window size", 1000, 1, Integer.MAX_VALUE);
+    public IntOption maxWindowSize = new IntOption("maxWindowSize", 'm', "Max Window size", 1000, 1, Integer.MAX_VALUE);
 
-    public IntOption minWindowSize = new IntOption("Min WindowSize", 'w', "Min Window size", -1, 1, Integer.MAX_VALUE);
+    public IntOption minWindowSize = new IntOption("minWindowSize", 'w', "Min Window size", -1, -1, Integer.MAX_VALUE);
 
-    public FlagOption detectDrift = new FlagOption("Detect Drift", 'd', "Detect Drift Flag");
+    public FlagOption detectDrift = new FlagOption("detectDrift", 'd', "Detect Drift Flag");
 
-    public StringOption uptadeStrategy = new StringOption ("Update Strategy", 'u', "Uptade Strategy", "replace");
+    public StringOption uptadeStrategy = new StringOption ("updateStrategy", 'u', "Uptade Strategy", "replace");
     
 
 
-    protected List<Instance> window;
+    protected ArrayList<Instance> window;
 
     protected List<Booster> ensemble;
     
@@ -98,12 +98,59 @@ public class AdaptativeXGBoost extends AbstractClassifier {
     /* Predict method */
     @Override
     public double[] getVotesForInstance(Instance instance) {
+    	ArrayList<Instance> data = new ArrayList<Instance>();
+    	data.add(instance);
+    	
+    	double[] votes = new double[instance.numClasses()];
+    	
+    	Arrays.fill(votes, 0.0);
+    	
+    	float[] instancesArray = flattenInstances(data);
+    	float[] labels = this.arrayToFloat(getLabels(data));
+    	
+    	int trees_in_ensemble = 0;
+    	
+    	if(this.uptadeStrategy.getValue() == this.REPLACE_STRATEGY) {
+    		trees_in_ensemble = this.modelIndex;
+    	}else {
+    		trees_in_ensemble = this.ensemble.size();
+    	}
+    	
+    	if(trees_in_ensemble<=0) {
+    		return votes;
+    	}
+    	
+    	try {
+			DMatrix d_test = new DMatrix(instancesArray,
+			        data.size(),
+			        this.numberOfAttr.intValue());
+			
+			for (int i=0; i < trees_in_ensemble; i++) {
+				float [][] margins = this.ensemble.get(i).predict(d_test, true);
+				d_test.setBaseMargin(margins);
+			}
+			
+			float predicted = this.ensemble.get(trees_in_ensemble-1).predict(d_test, true)[0][0];
+			if(predicted > 0.5f) {
+				predicted = 1f;
+			}else {
+				predicted = 0f;
+			}
+			int indexPred = (int) predicted;
+			votes[indexPred]=1.0;
+			
+			
+			
+		} catch (XGBoostError e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 
-        double[] votes = new double[instance.numClasses()];
+       
 
-        Random random = new Random();
+        //Random random = new Random();
 
-        votes = random.doubles(instance.numClasses(), 1, 1000).toArray();
+        //votes = random.doubles(instance.numClasses(), 1, 1000).toArray();
 
         return votes;
     }
@@ -112,14 +159,21 @@ public class AdaptativeXGBoost extends AbstractClassifier {
     @Override
     public void trainOnInstanceImpl(Instance instance) {
 
-        System.out.println("Training...");
-
+        //System.out.println("Training...");
+    	
+    	if(instance.numClasses()>2) {
+    		System.out.println("This code does not support multi class classification");
+    		return;
+    	}
+        
         window.add(instance);
         
-        this.numberOfAttr = instance.numAttributes();
+        
+        this.numberOfAttr = instance.numAttributes()-1; //remove class attr
 
         while (window.size() >= this.windowSize) {
-            this.trainOnMiniBatch(window) // Needs to be improved. Select just 1 to WindowSize Instances;
+        	//System.out.println("Training booster");
+            this.trainOnMiniBatch(window); // Needs to be improved. Select just 1 to WindowSize Instances;
             int i = 0;
             while (i < this.windowSize){
                 window.remove(0);
@@ -149,7 +203,7 @@ public class AdaptativeXGBoost extends AbstractClassifier {
         return true;
     }
 
-    private void trainOnMiniBatch(List data){
+    private void trainOnMiniBatch(ArrayList<Instance> data){
         if (this.uptadeStrategy.getValue() == this.REPLACE_STRATEGY){
             Booster booster = null;
 			try {
@@ -178,30 +232,47 @@ public class AdaptativeXGBoost extends AbstractClassifier {
         }
     }
 
-    private Booster trainBooster(List data, Integer len) throws XGBoostError{
+    private Booster trainBooster(ArrayList<Instance> data, Integer len) throws XGBoostError{
         /* To be implemented */
     	
     	float[] instancesArray = flattenInstances(data);
-    	//int[] labels = getLabels(data);
+    	float[] labels = this.arrayToFloat(getLabels(data));
     	DMatrix d_mini_batch_train = new DMatrix(instancesArray,
                 data.size(),
                 this.numberOfAttr.intValue());
     	
-    	float[] margins = new float[data.size()];
+    	d_mini_batch_train.setLabel(labels);
     	
-    	Arrays.fill(margins, this.initMargin);
+    	float[][] margins = new float[data.size()][1]; //binary classifier
     	
-    	/*for (int j=0; j< this.ensemble.size(); j++) {
-    		this.sumElementWise(margins, this.ensemble.get(j).predict(d_mini_batch_train, true));
-    	}*/
+    	for (float[] row: margins)
+    	    Arrays.fill(row, this.initMargin);
+    	
+    	//System.out.println(this.ensemble.size());
+    	
+    	for (int j=0; j < len; j++) {
+    		float[][] predicts = this.ensemble.get(j).predict(d_mini_batch_train, true);
+    		
+    		for (int i=0; i < predicts.length; i++) {
+	    		margins[i] = this.sumElementWise(margins[i], predicts[i]);
+	    		
+	    	}
+    		
+    	}
+    	
+    	d_mini_batch_train.setBaseMargin(margins);
+    	
+    	Map<String, DMatrix> watches = new HashMap<String, DMatrix>() {
+			private static final long serialVersionUID = 1L;
+		};
     	
     	
     	
     	
-        return XGBoost.train(null, this.boostingParams, randomSeed, null, null, null);
+        return XGBoost.train(d_mini_batch_train, this.boostingParams,10, watches, null, null);
     }
     
-    private float[] sumElementWise(float[] a1, float[] a2) {
+    public float[] sumElementWise(float[] a1, float[] a2) {
     	float [] a3 = new float[a1.length];
     	for (int i=0; i<a1.length;i++) {
     		a3[i] = a1[i] + a2[i];
@@ -210,20 +281,28 @@ public class AdaptativeXGBoost extends AbstractClassifier {
     	return a3;
     }
 
-    private float[] flattenInstances(List data){
+    private float[] flattenInstances(ArrayList<Instance> data){
         float [] instArray = {};
         for (int i=0; i< data.size();i++){
             Instance inst = (Instance) data.get(i);
-            instArray = this.concatArrays(instArray, this.arrayToFloat(inst.toDoubleArray()));
+            double[] instanceArray = inst.toDoubleArray();
+            instanceArray = Arrays.copyOfRange(instanceArray, 0, inst.classIndex());
+            
+            instArray = this.concatArrays(instArray, this.arrayToFloat(instanceArray));
+            
         }
         
         return instArray;
 
     }
     
-    /*private getLabels() {
-    	
-    }*/
+    private double[] getLabels(ArrayList<Instance> data) {
+    	double[] labels = new double[data.size()];
+    	for (int i=0; i<data.size();i++) {
+    		labels[i] = data.get(i).classValue();
+    	}
+    	return labels;
+    }
     
     private float[] arrayToFloat(double[] array) {
     	float [] newArray = new float[array.length];
@@ -252,7 +331,7 @@ public class AdaptativeXGBoost extends AbstractClassifier {
 
 
     private void resetWindowSize(){
-        if (this.minWindowSize.getValue()){
+        if (this.minWindowSize.getValue()!= -1){
             this.dynamicWindowSize = this.minWindowSize.getValue();
         }else{
             this.dynamicWindowSize = this.maxWindowSize.getValue();
@@ -271,30 +350,4 @@ public class AdaptativeXGBoost extends AbstractClassifier {
         }
     }
 
-
-    /* Main just for tests and debugging, remove in final version */
-    public static void main(String[] args) {
-    	
-    	float[] mat = {0f,1f,2f,1f,3f,4f,5f,1f,6f,7f,8f,0f,9f,10f,11f,1f};
-    	try {
-	    	DMatrix d_mini_batch_train = new DMatrix(mat,
-	                4,
-	                4);
-	    	float[] labels = d_mini_batch_train.getLabel();
-	    	System.out.println(Arrays.toString(labels));
-    	} catch(Exception e) {
-    		e.printStackTrace();
-    	}
-    	/*0  0   1   2
-    	1  3   4   5
-    	2  6   7   8
-    	3  9  10  11
-    	
-    	0  1
-    	1  1
-    	2  0
-    	3  1*/
-
-
-    }
 }
