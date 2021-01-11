@@ -103,7 +103,6 @@ public class AdaptativeXGBoost extends AbstractClassifier implements MultiClassC
         Arrays.fill(votes, 0.0);
 
         float[] instancesArray = flattenInstances(data);
-        // float[] labels = this.arrayToFloat(getLabels(data));
 
         int trees_in_ensemble = 0;
 
@@ -296,7 +295,7 @@ public class AdaptativeXGBoost extends AbstractClassifier implements MultiClassC
     private float[] flattenInstances(ArrayList<Instance> data) {
         float[] instArray = {};
         for (int i = 0; i < data.size(); i++) {
-            Instance inst = (Instance) data.get(i);
+            Instance inst = data.get(i);
             double[] instanceArray = inst.toDoubleArray();
             instanceArray = Arrays.copyOfRange(instanceArray, 0, inst.classIndex());
 
